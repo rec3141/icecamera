@@ -31,3 +31,7 @@ class SeawaterTests(unittest.TestCase):
             with patch('dashboard.camera_seawater.image_guards',return_value=[]),patch('dashboard.camera_seawater.features',return_value=[]),patch('dashboard.camera_seawater.infer',return_value={'scores':{'clear_seawater_score':.8},'outside_training_features':False}):
                 self.assertEqual(f.decide('x',None)['route'],'gemma')
             flag.write_text('{}');self.assertEqual(f.decide('x',None)['reason'],'filter disabled')
+    def test_clear_water_budget_ambiguity_not_ice(self):
+        row=dict(surface_percentages={'icy bits':0,'unknown':15},artifact_percentages={'blurry':0},visibility='clear',confidence='high')
+        self.assertFalse(audit_contradiction(json.dumps(row)))
+        row['visibility']='uncertain';self.assertTrue(audit_contradiction(json.dumps(row)))

@@ -21,8 +21,9 @@ try:
 except FileNotFoundError:rows=[]
 expected=len(json.loads((ROOT/'queue.json').read_text())['queue'])
 saved_files={r['file'] for r in rows if r.get('finish_reason')=='stop'}
-if (ROOT/'seawater-skips.json').exists() and not (ROOT/'seawater-filter-disabled.json').exists():
-    saved_files.update(r['file'] for r in json.loads((ROOT/'seawater-skips.json').read_text()))
+if (ROOT/'seawater-skips.json').exists():
+    saved_files.update(r['file'] for r in json.loads((ROOT/'seawater-skips.json').read_text())
+        if not (ROOT/('batch-filter-disabled.json' if r.get('stage')=='batch' else 'seawater-filter-disabled.json')).exists())
 saved=len(saved_files)
 active=subprocess.run(['systemctl','--user','is-active',UNIT],capture_output=True,text=True).stdout.strip()
 cpu,gpu,_,_=m.temperatures()

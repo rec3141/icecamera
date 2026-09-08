@@ -46,4 +46,8 @@ def audit_contradiction(response):
     d=json.loads(response.strip().removeprefix('```json').removesuffix('```').strip())
     s=d['surface_percentages']
     ice=sum(s.get(k,0) for k in ['grease ice','nilas','thin ice floe','thick ice floe','icy bits','brash ice'])
-    return ice>0 or s.get('unknown',100)>=10 or max(d['artifact_percentages'].values(),default=100)>20
+    # The full taxonomy prompt often reserves 15% unknown for distinguishing
+    # ripples from calm water even while explicitly reporting clear, ice-free water.
+    # Permit that small budget ambiguity only for clear/high-confidence audits.
+    tolerated_unknown=20 if d.get('visibility')=='clear' and d.get('confidence')=='high' else 9
+    return ice>0 or s.get('unknown',100)>tolerated_unknown or max(d['artifact_percentages'].values(),default=100)>20
