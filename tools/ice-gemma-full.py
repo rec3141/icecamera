@@ -24,7 +24,24 @@ SIZE_EVIDENCE=os.environ.get('ICE_GEMMA_SIZE_EVIDENCE')=='1'
 PHOTO_ROOT=Path(os.environ.get('ICE_GEMMA_PHOTO_ROOT','/media/cryomics/T7 Shield/Amundsen/Camera_360/2025_LEG_04'))
 LIVE_QUEUE=os.environ.get('ICE_GEMMA_LIVE_QUEUE')=='1'
 BATCH_TRIAGE=os.environ.get('ICE_GEMMA_BATCH_TRIAGE')=='1'
-TOOLS=Path('/home/cryomics/Desktop/icecamera/tools')
+_backfill_cache=(None,{},set())
+def eligible_for_processing(item):
+    global _backfill_cache
+    control=OUT/'backfill-paused.json'
+    if not control.exists():return True
+    stamp=control.stat().st_mtime_ns
+    if stamp!=_backfill_cache[0]:
+        policy=json.loads(control.read_text())
+        _backfill_cache=(stamp,policy,set(policy.get('allowed_files',[])))
+    _,policy,allowed=_backfill_cache
+    return item.get('capture_time','')>=policy['capture_from'] or item['file'] in allowed
+def backfill_priority(item):
+    eligible_for_processing(item)
+    policy=_backfill_cache[1]
+    capture=item.get('capture_time','')
+    live=capture>=policy.get('capture_from','')
+    return (live,0 if live else policy.get('ice_fraction_by_file',{}).get(item['file'],0),capture,item['file'])
+TOOLS=Path(__file__).resolve().parent
 UNIT='ice-gemma-shared.service'
 URL='http://127.0.0.1:18043'
 _spec=importlib.util.spec_from_file_location('taxonomy',Path(__file__).with_name('ice-taxonomy.py'))
@@ -125,12 +142,16 @@ def main():
             page+='<p>Pipeline: local filter → two-order batch triage → full classification. <a href="gemma-batches.html">Batch sheets and full responses</a>. Batch water candidates: first candidate audited, then 1%; local candidates retain their existing audit policy.</p>'
             batch_page='<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30"><title>Live Gemma batches</title><style>body{font:16px system-ui;max-width:1200px;margin:auto}img{max-width:100%}pre{white-space:pre-wrap}</style><h1>Live two-order batch triage</h1><p>Only two water votes qualify for bypass. Ice, unclear, disagreements and invalid responses go to full classification. Full-resolution photos are retained.</p>'
             for path in sorted((OUT/'batch-triage').glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True):
-                record=json.loads(path.read_text())
+                try:
+                    record=json.loads(path.read_text())
+                except (OSError, ValueError) as exc:
+                    batch_page+='<h2>'+escape(path.stem)+'</h2><p>Saved batch report unavailable: '+escape(str(exc))+'</p>'
+                    continue
                 batch_page+='<h2>'+escape(path.stem)+'</h2><img loading="lazy" src="'+OUT.name+'/batch-triage/'+path.stem+'.jpg"><pre>'+escape(json.dumps(record,indent=2))+'</pre>'
             atomic(ROOT/'gemma-batches.html',batch_page)
         if seawater:
             page+=f'<p>Gemma classified: {len(rows)}. Filtered seawater: {len(done)-len(rows)}. <a href="seawater-filtered.html">Filter decisions and ROI previews</a>. Filtered records are classifier estimates, not Gemma responses.</p>'
-            filtered='<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30"><title>Filtered seawater</title><style>body{font:16px system-ui;max-width:1000px;margin:auto}img{max-width:600px;width:100%}</style><h1>Seawater filter decisions</h1><p>Experimental classifier estimates, not verified 100% water. Ten percent of eligible candidates are audited by Gemma. Audit disagreement disables filtering and requeues skipped images. Original photos are retained.</p>'
+            filtered='<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30"><title>Filtered seawater</title><style>body{font:16px system-ui;max-width:1000px;margin:auto}img{max-width:600px;width:100%}</style><h1>Seawater filter decisions</h1><p>Experimental estimates, not verified 100% water. Local candidates: 10% audits. Batch candidates: first candidate then 1% audits. Audits are report-only; disabling or requeueing requires user direction. Original photos are retained. <a href="gemma-audits.html">Audit report</a></p>'
             if disabled.exists() or batch_disabled.exists():filtered+='<p>A filter stage is disabled: its previous skips are being sent to Gemma for reclassification.</p>'
             for r in reversed(skips):filtered+='<h3>'+escape(r['file'])+'</h3><p>'+escape(r.get('stage','local'))+' · '+escape(str(r.get('score','two-order water agreement')))+'</p><img loading="lazy" src="'+OUT.name+'/'+r['image']+'">'
             atomic(ROOT/'seawater-filtered.html',filtered)
@@ -143,6 +164,13 @@ def main():
             page+='<h3>Response · '+str(round(r['elapsed_s'],1))+' seconds</h3><pre>'+escape(r['response'])+'</pre></article>'
         page=page.replace('&lt;20 m','&lt;40 m').replace('&gt;20 m','&gt;40 m')
         atomic(ROOT/'gemma.html',page+'</html>')
+        audits=[r for r in rows if r.get('seawater_triage',{}).get('route')=='audit']
+        audit_page='<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30"><title>Gemma audits</title><style>body{font:16px system-ui;max-width:1000px;margin:auto}img{max-width:100%}pre{white-space:pre-wrap}</style><h1>Filter audits · report only</h1><p>Disagreements do not disable filtering or requeue images. Await user direction. Full responses and original photos are retained.</p>'
+        for r in reversed(audits):
+            try:disagrees=audit_contradiction(r['response'])
+            except Exception:disagrees=True
+            audit_page+='<h2>'+escape(r['file'])+'</h2><p>'+('DISAGREEMENT — review requested' if disagrees else 'No audit disagreement flagged')+'</p><img loading="lazy" src="'+OUT.name+'/'+r['images'][1]+'"><pre>'+escape(r['response'])+'</pre>'
+        atomic(ROOT/'gemma-audits.html',audit_page)
     def checked_request(payload):
         ready();_,gpu,_=temperature()
         while gpu>=78:time.sleep(2);_,gpu,_=temperature()
@@ -162,7 +190,7 @@ def main():
         atomic(skips_path,json.dumps(skips,indent=2));done.add(item['file'])
     def prepare_batch():
         if not BATCH_TRIAGE or batch_disabled.exists():return
-        pending=[r for r in queue if r['file'] not in done and r['file'] not in batch_decisions][:16]
+        pending=[r for r in queue if r['file'] not in done and r['file'] not in batch_decisions and eligible_for_processing(r)][:16]
         cases=[]
         for candidate in pending:
             file=candidate['file']
@@ -208,8 +236,9 @@ def main():
                 data=json.loads(queue_path.read_text())
                 queue=data['queue'];expected=len(queue);stamp=current
                 assert expected==len({r['file'] for r in queue})
+                queue.sort(key=backfill_priority,reverse=True)
                 atomic(OUT/'queue.json',json.dumps(data,indent=2))
-            item=next((r for r in queue if r['file'] not in done),None)
+            item=next((r for r in queue if r['file'] not in done and eligible_for_processing(r)),None)
             if item is not None:
                 if item['file'] not in batch_decisions:prepare_batch()
                 if item['file'] not in done:yield item
@@ -267,11 +296,9 @@ def main():
                              human_label=humans.get(file,[]),queue_metadata=item,usage=raw.get('usage'),utc=datetime.now(timezone.utc).isoformat(),**checked)
                     rows.append(row);done.add(file);atomic(OUT/'results.json',json.dumps(rows,indent=2));render()
                     if triage['route']=='audit' and audit_contradiction(response):
-                        flag=batch_disabled if triage.get('stage')=='batch' else disabled
-                        atomic(flag,json.dumps(dict(file=file,reason='Gemma audit disagrees with candidate; requeue this filter stage'),indent=2))
-                        done={r['file'] for r in rows if r.get('finish_reason')=='stop'}
-                        done.update(r['file'] for r in skips if active_skip(r))
-                        render();print('Seawater filter disabled by audit; skips requeued',flush=True)
+                        with (OUT/'audit-alerts.jsonl').open('a') as log:
+                            log.write(json.dumps(dict(file=file,stage=triage.get('stage','local'),utc=row['utc'],action='report only; awaiting user direction'))+'\n')
+                        print('AUDIT DISAGREEMENT (report only):',file,flush=True)
                     print(f'{len(done)}/{expected} {file} {row["elapsed_s"]:.1f}s',flush=True);break
                 except Exception as error:
                     status('retrying',file=file,error=str(error),attempt=attempt+1)

@@ -6,7 +6,7 @@ from pathlib import Path
 root=Path('/home/cryomics/Downloads')
 source=root/'amundsen-ice-gemma-leg4-size-evidence/results.json'
 if source.exists():
-    spec=importlib.util.spec_from_file_location('explorer','/home/cryomics/Desktop/icecamera/tools/ice-region-explorer.py')
+    spec=importlib.util.spec_from_file_location('explorer',Path(__file__).resolve().with_name('ice-region-explorer.py'))
     explorer=importlib.util.module_from_spec(spec);spec.loader.exec_module(explorer)
     for name in ['amundsen-ice-full-leg-600x300','amundsen-ice-full-leg-tsne']:
         portal=root/name;path=portal/'annotation-sources.json'

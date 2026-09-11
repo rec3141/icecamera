@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 import urllib.request
 
-TOOLS = Path('/home/cryomics/Desktop/icecamera/tools')
+TOOLS = Path(__file__).resolve().parent
 def module(name, file):
     spec = importlib.util.spec_from_file_location(name, TOOLS / file)
     result = importlib.util.module_from_spec(spec)

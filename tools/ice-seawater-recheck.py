@@ -23,7 +23,7 @@ Return only JSON with fields:
 This is conservative triage, not scientific verification.'''
 
 def main():
-    spec=importlib.util.spec_from_file_location('monitor','/home/cryomics/Desktop/icecamera/tools/ice-monitored-review.py')
+    spec=importlib.util.spec_from_file_location('monitor',Path(__file__).resolve().with_name('ice-monitored-review.py'))
     monitor=importlib.util.module_from_spec(spec);spec.loader.exec_module(monitor)
     candidates=json.loads((OUT/'review.json').read_text())
     # Verified ice-at-edge contradiction first, then the wet-lens example.

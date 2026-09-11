@@ -44,6 +44,9 @@ def run(cases,call,out):
         prompt=PROMPT.format(n=len(group))
         payload=dict(model='gemma-camera',messages=[dict(role='user',content=[dict(type='text',text=prompt),dict(type='image_url',image_url=dict(url='data:image/jpeg;base64,'+base64.b64encode(blob).decode()))])],temperature=0,seed=42,max_tokens=1000,stream=False,chat_template_kwargs=dict(enable_thinking=False))
         raw=call(payload)
-        (out/f'{batch_id}-{order}.json').write_text(json.dumps(dict(files=[r['file'] for r in group],prompt=prompt,response=raw),indent=2))
+        report=out/f'{batch_id}-{order}.json'
+        temporary=report.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(dict(files=[r['file'] for r in group],prompt=prompt,response=raw),indent=2))
+        temporary.replace(report)
         answers.append(labels(raw,group))
     return batch_id,consensus(*answers)

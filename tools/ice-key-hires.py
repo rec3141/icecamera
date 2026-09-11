@@ -12,7 +12,7 @@ from PIL import Image
 root=Path('/home/cryomics/Downloads/ice-reference-key')
 parser=argparse.ArgumentParser();parser.add_argument('--floes-v2',action='store_true');args=parser.parse_args()
 out=Path('/home/cryomics/Downloads/ice-resolution');out.mkdir(exist_ok=True)
-spec=importlib.util.spec_from_file_location('rot','/home/cryomics/Desktop/icecamera/tools/ice-rotated-preview.py')
+spec=importlib.util.spec_from_file_location('rot',Path(__file__).resolve().with_name('ice-rotated-preview.py'))
 rot=importlib.util.module_from_spec(spec);spec.loader.exec_module(rot)
 examples=json.loads((root/'selected-examples.json').read_text())['examples']
 uris=[]

@@ -13,7 +13,7 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageOps
 import importlib.util
 
-TOOLS = Path('/home/cryomics/Desktop/icecamera/tools')
+TOOLS = Path(__file__).resolve().parent
 def module(name, file):
     spec=importlib.util.spec_from_file_location(name, TOOLS/file)
     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value)

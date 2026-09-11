@@ -13,7 +13,7 @@ PAUSE=Path(os.environ.get('ICE_TEACHER_PAUSE','/home/cryomics/.cache/underway/te
 UNIT=os.environ.get('ICE_TEACHER_UNIT','ice-gemma-overnight.service')
 TIMER=os.environ.get('ICE_TEACHER_TIMER','ice-teacher-watch.timer')
 RESULTS=ROOT/os.environ.get('ICE_TEACHER_RESULTS','gemma4/results.json')
-spec=importlib.util.spec_from_file_location('monitor','/home/cryomics/Desktop/icecamera/tools/ice-monitored-review.py')
+spec=importlib.util.spec_from_file_location('monitor',Path(__file__).resolve().with_name('ice-monitored-review.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 state=json.loads(STATE.read_text()) if STATE.exists() else dict(started=time.time(),retries=0,cool_checks=0)
 try:
