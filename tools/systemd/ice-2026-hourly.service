@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh combined t-SNE, linkage trees and human-ranked backfill
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/dev/icecamera
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+Environment=NUMBA_NUM_THREADS=1
+Nice=15
+CPUQuota=100%
+TimeoutStartSec=infinity
+ExecStart=/usr/bin/systemctl --user start --wait ice-2026-projection.service
+ExecStart=/opt/miniforge3/bin/python3 tools/ice-refresh-2026-projection.py --finish-layout
+ExecStart=/opt/miniforge3/bin/python3 tools/ice-select-backfill.py

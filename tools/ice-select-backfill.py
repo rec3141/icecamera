@@ -1,4 +1,4 @@
-"""Enable backfill in joint t-SNE Ward-64 clusters with >20% ice-labeled photos."""
+"""Rank every human-labelled joint t-SNE Ward-64 cluster by its ice-label fraction."""
 import json
 import re
 from collections import defaultdict
@@ -16,18 +16,22 @@ def main():
     groups=defaultdict(list)
     for identifier,cluster in zip(state['ids'],labels):groups[int(cluster)].append(identifier)
     ice={'grease ice','nilas','thin fyi','thin ice floe','icy bits','brash ice','ice floe','thick ice floe'}
-    report=[];allowed=[];fractions={}
+    if state['ids']!=list(points):raise ValueError('Stale Ward tree: projection identities differ')
+    report=[];allowed=[];fractions={};cluster_by_file={}
     for cluster,ids in sorted(groups.items()):
         labeled=[i for i in ids if human.get(i)]
         positive=sum(any(re.sub(r'^[0-9A-F] ', '',v).lower() in ice for v in human[i]) for i in labeled)
-        selected=bool(labeled) and positive/len(labeled)>.2
-        for i in ids:fractions[points[i]['file']]=positive/len(labeled) if labeled else 0
-        report.append(dict(cluster=cluster,photos=len(ids),human_labeled=len(labeled),ice_labeled=positive,selected=selected))
+        selected=bool(labeled)
+        for i in ids:
+            fractions[points[i]['file']]=positive/len(labeled) if labeled else 0
+            cluster_by_file[points[i]['file']]=cluster
+        report.append(dict(cluster=cluster,photos=len(ids),human_labeled=len(labeled),ice_labeled=positive,ice_fraction=positive/len(labeled) if labeled else None,selected=selected))
         if selected:allowed.extend(points[i]['file'] for i in ids)
     out=root/'amundsen-ice-gemma-2026'
     control=out/'backfill-paused.json'
     policy=json.loads(control.read_text())
-    policy.update(reason='Selective backfill: joint t-SNE Ward k=64, >20% of human-labeled members have any ice label; highest fraction first after live arrivals.',label_source=str(source),allowed_files=allowed,clusters=report,ice_fraction_by_file=fractions)
+    report.sort(key=lambda r:(-(r['ice_fraction'] if r['ice_fraction'] is not None else -1),r['cluster']))
+    policy.update(reason='All human-labelled joint t-SNE Ward k=64 clusters, highest human ice-label fraction first; unlabelled clusters excluded.',label_source=str(source),allowed_files=allowed,clusters=report,ice_fraction_by_file=fractions,cluster_by_file=cluster_by_file,cluster_rank={str(r['cluster']):i for i,r in enumerate(report)})
     tmp=control.with_suffix('.tmp');tmp.write_text(json.dumps(policy,indent=2));tmp.replace(control)
     queue=json.loads((out/'selection.json').read_text())['queue']
     done={r['file'] for name in ('results.json','seawater-skips.json') for r in json.loads((out/name).read_text())}

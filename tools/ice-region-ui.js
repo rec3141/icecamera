@@ -55,3 +55,6 @@ window.updateIceAnnotations=annotations=>{data.annotations=annotations;$('status
 let annotationScript=null;
 function refreshAnnotations(){if(annotationScript)return;const script=document.createElement('script');annotationScript=script;script.src='annotations-live.js?t='+Date.now();script.onload=script.onerror=()=>{script.remove();annotationScript=null;};document.head.append(script);}
 setInterval(refreshAnnotations,30000);
+// Reload the layout hourly, deferring while the user drags or edits a label.
+let layoutRefreshDue=Date.now()+3600000;
+setInterval(()=>{if(Date.now()<layoutRefreshDue||drag||/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName))return;location.reload();},30000);

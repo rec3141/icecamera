@@ -23,6 +23,10 @@ def test_combined_policy_excludes_qwen_without_changing_source_or_other_portals(
     assert list(annotations)==['2']
     assert annotations['2']['model']=='gemma-current'
     assert len(rows)==3
+    page=(tmp_path/'regions.html').read_text()
+    assert '3600000' in page
+    explorer.render(tmp_path,rows,False,live_only=True)
+    assert (tmp_path/'regions.html').read_text()==page
 
 
 def test_refit_archives_stale_derived_projections(tmp_path):

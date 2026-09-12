@@ -27,6 +27,8 @@ BATCH_TRIAGE=os.environ.get('ICE_GEMMA_BATCH_TRIAGE')=='1'
 _backfill_cache=(None,{},set())
 def eligible_for_processing(item):
     global _backfill_cache
+    before=os.environ.get('ICE_GEMMA_CAPTURE_BEFORE')
+    if before and item.get('capture_time','')>=before:return False
     control=OUT/'backfill-paused.json'
     if not control.exists():return True
     stamp=control.stat().st_mtime_ns
@@ -34,15 +36,17 @@ def eligible_for_processing(item):
         policy=json.loads(control.read_text())
         _backfill_cache=(stamp,policy,set(policy.get('allowed_files',[])))
     _,policy,allowed=_backfill_cache
-    return item.get('capture_time','')>=policy['capture_from'] or item['file'] in allowed
+    return (not before and item.get('capture_time','')>=policy['capture_from']) or item['file'] in allowed
 def backfill_priority(item):
     eligible_for_processing(item)
     policy=_backfill_cache[1]
     capture=item.get('capture_time','')
-    live=capture>=policy.get('capture_from','')
-    return (live,0 if live else policy.get('ice_fraction_by_file',{}).get(item['file'],0),capture,item['file'])
+    live=not os.environ.get('ICE_GEMMA_CAPTURE_BEFORE') and capture>=policy.get('capture_from','')
+    cluster=policy.get('cluster_by_file',{}).get(item['file'])
+    rank=policy.get('cluster_rank',{}).get(str(cluster),9999)
+    return (live,0 if live else policy.get('ice_fraction_by_file',{}).get(item['file'],0),-rank,capture,item['file'])
 TOOLS=Path(__file__).resolve().parent
-UNIT='ice-gemma-shared.service'
+UNIT=os.environ.get('ICE_GEMMA_SERVER_UNIT','ice-gemma-shared.service')
 URL='http://127.0.0.1:18043'
 _spec=importlib.util.spec_from_file_location('taxonomy',Path(__file__).with_name('ice-taxonomy.py'))
 taxonomy=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(taxonomy)
@@ -191,6 +195,9 @@ def main():
     def prepare_batch():
         if not BATCH_TRIAGE or batch_disabled.exists():return
         pending=[r for r in queue if r['file'] not in done and r['file'] not in batch_decisions and eligible_for_processing(r)][:16]
+        if pending and _backfill_cache[1].get('cluster_by_file'):
+            groups=_backfill_cache[1]['cluster_by_file'];cluster=groups.get(pending[0]['file'])
+            pending=[r for r in pending if groups.get(r['file'])==cluster]
         cases=[]
         for candidate in pending:
             file=candidate['file']
@@ -231,7 +238,8 @@ def main():
             return
         stamp=None
         while True:
-            current=queue_path.stat().st_mtime_ns
+            control=OUT/'backfill-paused.json'
+            current=(queue_path.stat().st_mtime_ns,control.stat().st_mtime_ns if control.exists() else None)
             if current!=stamp:
                 data=json.loads(queue_path.read_text())
                 queue=data['queue'];expected=len(queue);stamp=current
@@ -306,6 +314,9 @@ def main():
                     if attempt==2:raise
                     time.sleep(5)
             status('running')
+            if os.environ.get('ICE_GEMMA_REFRESH_ANNOTATIONS')=='1':
+                published=subprocess.run([sys.executable,str(TOOLS/'ice-refresh-2026-projection.py'),'--annotations-only'],check=False)
+                if published.returncode:print('Annotation refresh failed; will retry after the next photo',flush=True)
         status('complete')
     except BaseException as error:
         status('stopped',error=str(error));raise

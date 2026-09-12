@@ -2,10 +2,17 @@
 import argparse
 import importlib.util
 import json
+import fcntl
 from pathlib import Path
 
 
-def render(output, responses, follow_links=True):
+def render(output, responses, follow_links=True, live_only=False):
+    with (output/'render.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        _render(output,responses,follow_links,live_only)
+
+
+def _render(output, responses, follow_links=True, live_only=False):
     layout=output/'embedding.json'
     if not layout.exists(): return
     points=json.loads(layout.read_text())
@@ -19,6 +26,9 @@ def render(output, responses, follow_links=True):
         responses=[*prior,*responses]
     by_file={r['file']:r for r in responses if allow_legacy_qwen or (r.get('model') and 'qwen' not in r['model'].lower())}
     annotations={p['id']:dict(response=by_file[p['file']]['response'],finish_reason=by_file[p['file']]['finish_reason'],model=by_file[p['file']].get('model','legacy Qwen'),quality_flags=by_file[p['file']].get('quality_flags',[])) for p in points if p['file'] in by_file}
+    live=output/'annotations-live.js';temp=live.with_suffix('.tmp')
+    temp.write_text('window.updateIceAnnotations('+json.dumps(annotations).replace('<','\\u003c')+');');temp.replace(live)
+    if live_only:return
     projections={'tsne':dict(coords=[[p['x'],p['y']] for p in points],trees={})}
     if (output/'projections.json').exists():
         extra=json.loads((output/'projections.json').read_text())
@@ -31,8 +41,6 @@ def render(output, responses, follow_links=True):
     pcs=json.loads(pcs_path.read_text()) if pcs_path.exists() else None
     if pcs and pcs['ids']!=[p['id'] for p in points]:raise ValueError('Feature PC identities differ')
     payload=json.dumps(dict(points=points,annotations=annotations,projections=projections,fixed=fixed,pcs=pcs,allow_legacy_qwen=allow_legacy_qwen)).replace('<','\\u003c')
-    live=output/'annotations-live.js';temp=live.with_suffix('.tmp')
-    temp.write_text('window.updateIceAnnotations('+json.dumps(annotations).replace('<','\\u003c')+');');temp.replace(live)
     script=Path(__file__).with_name('ice-region-ui.js').read_text()
     page='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Ice region projections</title>
 <style>body{font:16px system-ui;background:#17212b;color:#eee;margin:18px}main{display:grid;grid-template-columns:1fr 1fr;gap:16px}canvas{width:100%;background:#0d1720;touch-action:none}img{max-width:100%}pre{white-space:pre-wrap}.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}button,select,input{padding:5px}#tip{position:fixed;pointer-events:none;background:#17212b;padding:6px;display:none}#tip img{width:250px}@media(max-width:800px){main{grid-template-columns:1fr}}</style>

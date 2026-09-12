@@ -10,6 +10,7 @@ import time
 portal=Path('/home/cryomics/Downloads/amundsen-ice-2025-2026-tsne')
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--finish-layout',action='store_true',help='Wait for the feature/t-SNE service, then rebuild its linkage trees with thermal guards')
+parser.add_argument('--annotations-only',action='store_true',help='Publish live annotations without rebuilding the page')
 args=parser.parse_args()
 if args.finish_layout:
     unit='ice-2026-projection.service'
@@ -29,5 +30,5 @@ if args.finish_layout:
 if (portal/'embedding.json').exists():
     spec=importlib.util.spec_from_file_location('explorer',Path(__file__).resolve().with_name('ice-region-explorer.py'))
     explorer=importlib.util.module_from_spec(spec);spec.loader.exec_module(explorer)
-    explorer.render(portal,[],False)
+    explorer.render(portal,[],False,live_only=args.annotations_only)
     print('Updated combined 2025–2026 model annotations')

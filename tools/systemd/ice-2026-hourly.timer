@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh combined t-SNE once per hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=ice-2026-hourly.service
+
+[Install]
+WantedBy=timers.target
