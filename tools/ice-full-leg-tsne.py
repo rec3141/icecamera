@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -24,6 +25,17 @@ def load(name,file):
 
 def write(path,obj):
     tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(json.dumps(obj));tmp.replace(path)
+
+
+def archive_layout(output):
+    """Keep the previous layout recoverable; derived trees cannot follow a refit."""
+    if not (output/'embedding.json').exists():return
+    backup=output/'layout-history'/str(time.time_ns());backup.mkdir(parents=True)
+    for name in ('embedding.json','layout-state.json'):
+        if (output/name).exists():shutil.copy2(output/name,backup/name)
+    for name in ('projections.json','ward-k64.json','feature-pcs.json'):
+        if (output/name).exists():(output/name).rename(backup/name)
+    print('Previous layout and derived projections archived in',backup,flush=True)
 
 
 def worker(a):
@@ -89,6 +101,7 @@ def worker(a):
             random_state=42,init='pca',learning_rate='auto',method='barnes_hut',
             n_jobs=1,verbose=1).fit_transform(StandardScaler().fit_transform(x))
         for point,xy in zip(points,coords):point.update(x=float(xy[0]),y=float(xy[1]))
+        archive_layout(a.output)
         write(layout,points);write(state,dict(signature=signature,seed=42,features=VERSION,feature_size=feature_size))
     responses=json.loads(a.annotations.read_text()) if a.annotations.exists() else []
     load('explorer','ice-region-explorer.py').render(a.output,responses)

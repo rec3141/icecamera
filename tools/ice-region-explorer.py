@@ -9,13 +9,15 @@ def render(output, responses, follow_links=True):
     layout=output/'embedding.json'
     if not layout.exists(): return
     points=json.loads(layout.read_text())
+    policy=output/'annotation-policy.json'
+    allow_legacy_qwen=json.loads(policy.read_text()).get('allow_legacy_qwen',True) if policy.exists() else True
     sources=output/'annotation-sources.json'
     if sources.exists():
         prior=[]
         for file in json.loads(sources.read_text()):
             if Path(file).exists():prior.extend(json.loads(Path(file).read_text()))
         responses=[*prior,*responses]
-    by_file={r['file']:r for r in responses}
+    by_file={r['file']:r for r in responses if allow_legacy_qwen or (r.get('model') and 'qwen' not in r['model'].lower())}
     annotations={p['id']:dict(response=by_file[p['file']]['response'],finish_reason=by_file[p['file']]['finish_reason'],model=by_file[p['file']].get('model','legacy Qwen'),quality_flags=by_file[p['file']].get('quality_flags',[])) for p in points if p['file'] in by_file}
     projections={'tsne':dict(coords=[[p['x'],p['y']] for p in points],trees={})}
     if (output/'projections.json').exists():
@@ -28,7 +30,7 @@ def render(output, responses, follow_links=True):
     pcs_path=output/'feature-pcs.json'
     pcs=json.loads(pcs_path.read_text()) if pcs_path.exists() else None
     if pcs and pcs['ids']!=[p['id'] for p in points]:raise ValueError('Feature PC identities differ')
-    payload=json.dumps(dict(points=points,annotations=annotations,projections=projections,fixed=fixed,pcs=pcs)).replace('<','\\u003c')
+    payload=json.dumps(dict(points=points,annotations=annotations,projections=projections,fixed=fixed,pcs=pcs,allow_legacy_qwen=allow_legacy_qwen)).replace('<','\\u003c')
     live=output/'annotations-live.js';temp=live.with_suffix('.tmp')
     temp.write_text('window.updateIceAnnotations('+json.dumps(annotations).replace('<','\\u003c')+');');temp.replace(live)
     script=Path(__file__).with_name('ice-region-ui.js').read_text()
