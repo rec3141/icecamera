@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dashboard.camera_seawater import Filter,audit_contradiction
 from dashboard import camera_batch
+from dashboard.camera_completion import completion_counts, external_completions
 import hashlib
 import subprocess
 import time
@@ -81,6 +82,18 @@ def request(payload):
     req=urllib.request.Request(URL+'/v1/chat/completions',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
     with client.open(req,timeout=300) as response:return json.load(response)
 
+def wait_for_priority_unit(peer,status,temperature,cool):
+    if not peer:return
+    while True:
+        active=subprocess.run(['systemctl','--user','is-active',peer],capture_output=True,text=True,timeout=10)
+        if active.returncode not in (0,3):
+            raise RuntimeError(f'Cannot inspect priority worker {peer}: {active.stderr.strip()}')
+        if active.stdout.strip() not in ('active','activating'):return
+        status('waiting for priority archive',priority_unit=peer)
+        _,gpu,avg=temperature()
+        if avg>=95 or gpu>=83:cool()
+        time.sleep(10)
+
 def main():
     OUT.mkdir(exist_ok=True);(OUT/'images').mkdir(exist_ok=True)
     queue_path=Path(os.environ.get('ICE_GEMMA_QUEUE',str(ROOT/'amundsen-ice-gemma-overnight/queue.json')))
@@ -101,7 +114,12 @@ def main():
     key_bytes=(ROOT/'ice-resolution/key-hires-floes-v2.png').read_bytes()
     key='data:image/png;base64,'+base64.b64encode(key_bytes).decode()
     rows=json.loads((OUT/'results.json').read_text()) if (OUT/'results.json').exists() else []
-    done={r['file'] for r in rows if r.get('finish_reason')=='stop'}
+    classified_files={r['file'] for r in rows if r.get('finish_reason')=='stop'}
+    queue_files={r['file'] for r in queue}
+    external=external_completions(os.environ.get('ICE_GEMMA_COMPLETED_SOURCES'),OUT/'results.json',queue_files)
+    if os.environ.get('ICE_GEMMA_COMPLETED_SOURCES'):
+        atomic(OUT/'external-completions.json',json.dumps(external,indent=2))
+    done=classified_files | set(external)
     filter_config=os.environ.get('ICE_SEAWATER_CONFIG')
     seawater=Filter(filter_config) if filter_config else None
     skips_path=OUT/'seawater-skips.json'
@@ -109,12 +127,14 @@ def main():
     disabled=OUT/'seawater-filter-disabled.json'
     batch_disabled=OUT/'batch-filter-disabled.json'
     def active_skip(r):return not (batch_disabled if r.get('stage')=='batch' else disabled).exists()
-    done.update(r['file'] for r in skips if active_skip(r))
+    filtered_files={r['file'] for r in skips if active_skip(r)}
+    done.update(filtered_files)
     batch_path=OUT/'batch-triage-decisions.json'
     batch_decisions=json.loads(batch_path.read_text()) if batch_path.exists() else {}
     started=time.monotonic();deadline=started+float(os.environ.get('ICE_GEMMA_MAX_HOURS','8'))*3600;window=thermal.RunningTemperature()
     def status(state,**extra):
-        atomic(OUT/'status.json',json.dumps(dict(state=state,completed=len(done),classified=len(rows),filtered_seawater=len(done)-len(rows),expected=expected,utc=datetime.now(timezone.utc).isoformat(),**extra),indent=2))
+        counts=completion_counts(classified_files,filtered_files,external,queue_files)
+        atomic(OUT/'status.json',json.dumps(dict(state=state,**counts,expected=expected,utc=datetime.now(timezone.utc).isoformat(),**extra),indent=2))
     def temperature():
         cpu,gpu,*_=thermal.monitor.temperatures();average=window.add(time.monotonic(),cpu)
         with (OUT/'telemetry.csv').open('a') as f:f.write(f'{time.time()},{cpu},{gpu},{average}\n')
@@ -128,7 +148,10 @@ def main():
             if cpu<85 and gpu<70 and avg<85:break
             time.sleep(2)
         subprocess.run(['systemctl','--user','start',UNIT],check=True)
+    def wait_for_priority():
+        wait_for_priority_unit(os.environ.get('ICE_GEMMA_YIELD_TO_UNIT'),status,temperature,cool)
     def ready():
+        wait_for_priority()
         for _ in range(90):
             cpu,gpu,avg=temperature()
             if avg>=95 or gpu>=83:cool()
@@ -153,8 +176,10 @@ def main():
                     continue
                 batch_page+='<h2>'+escape(path.stem)+'</h2><img loading="lazy" src="'+OUT.name+'/batch-triage/'+path.stem+'.jpg"><pre>'+escape(json.dumps(record,indent=2))+'</pre>'
             atomic(ROOT/'gemma-batches.html',batch_page)
+        counts=completion_counts(classified_files,filtered_files,external,queue_files)
+        page+=f'<p>Gemma classified here: {counts["classified"]}. Accepted responses in other sources: {counts["externally_completed"]}.</p>'
         if seawater:
-            page+=f'<p>Gemma classified: {len(rows)}. Filtered seawater: {len(done)-len(rows)}. <a href="seawater-filtered.html">Filter decisions and ROI previews</a>. Filtered records are classifier estimates, not Gemma responses.</p>'
+            page+=f'<p>Filtered seawater: {counts["filtered_seawater"]}. <a href="seawater-filtered.html">Filter decisions and ROI previews</a>. Filtered records are classifier estimates, not Gemma responses.</p>'
             filtered='<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30"><title>Filtered seawater</title><style>body{font:16px system-ui;max-width:1000px;margin:auto}img{max-width:600px;width:100%}</style><h1>Seawater filter decisions</h1><p>Experimental estimates, not verified 100% water. Local candidates: 10% audits. Batch candidates: first candidate then 1% audits. Audits are report-only; disabling or requeueing requires user direction. Original photos are retained. <a href="gemma-audits.html">Audit report</a></p>'
             if disabled.exists() or batch_disabled.exists():filtered+='<p>A filter stage is disabled: its previous skips are being sent to Gemma for reclassification.</p>'
             for r in reversed(skips):filtered+='<h3>'+escape(r['file'])+'</h3><p>'+escape(r.get('stage','local'))+' · '+escape(str(r.get('score','two-order water agreement')))+'</p><img loading="lazy" src="'+OUT.name+'/'+r['image']+'">'
@@ -191,9 +216,10 @@ def main():
     def save_skip(item,crop,triage):
         (OUT/'filtered').mkdir(exist_ok=True);path=f'filtered/{item["id"]}.jpg';crop.save(OUT/path,quality=90)
         skips.append(dict(file=item['file'],id=item['id'],image=path,utc=datetime.now(timezone.utc).isoformat(),**triage))
-        atomic(skips_path,json.dumps(skips,indent=2));done.add(item['file'])
+        atomic(skips_path,json.dumps(skips,indent=2));done.add(item['file']);filtered_files.add(item['file'])
     def prepare_batch():
         if not BATCH_TRIAGE or batch_disabled.exists():return
+        wait_for_priority()
         pending=[r for r in queue if r['file'] not in done and r['file'] not in batch_decisions and eligible_for_processing(r)][:16]
         if pending and _backfill_cache[1].get('cluster_by_file'):
             groups=_backfill_cache[1]['cluster_by_file'];cluster=groups.get(pending[0]['file'])
@@ -232,7 +258,7 @@ def main():
     status('starting');render()
     subprocess.run(['systemctl','--user','start',UNIT],check=True)
     def pending_items():
-        nonlocal queue,expected
+        nonlocal queue,expected,queue_files
         if not LIVE_QUEUE:
             yield from queue
             return
@@ -243,6 +269,7 @@ def main():
             if current!=stamp:
                 data=json.loads(queue_path.read_text())
                 queue=data['queue'];expected=len(queue);stamp=current
+                queue_files={r['file'] for r in queue}
                 assert expected==len({r['file'] for r in queue})
                 queue.sort(key=backfill_priority,reverse=True)
                 atomic(OUT/'queue.json',json.dumps(data,indent=2))
@@ -256,6 +283,7 @@ def main():
         for item in pending_items():
             file=item['file']
             if file in done:continue
+            wait_for_priority()
             for attempt in range(3):
                 try:
                     ready()
@@ -302,7 +330,7 @@ def main():
                     row=dict(id=item['id'],file=file,model='gemma-budget-1120-ub2048-all-high-floes-40m',reasoning='off',images=paths,scale_assumptions=taxonomy.SCALE,
                              seawater_triage=triage,prompt_variant='size-evidence' if SIZE_EVIDENCE else 'baseline',prompt_segments=texts,response=response,finish_reason=finish,elapsed_s=time.monotonic()-begin,
                              human_label=humans.get(file,[]),queue_metadata=item,usage=raw.get('usage'),utc=datetime.now(timezone.utc).isoformat(),**checked)
-                    rows.append(row);done.add(file);atomic(OUT/'results.json',json.dumps(rows,indent=2));render()
+                    rows.append(row);done.add(file);classified_files.add(file);atomic(OUT/'results.json',json.dumps(rows,indent=2));render()
                     if triage['route']=='audit' and audit_contradiction(response):
                         with (OUT/'audit-alerts.jsonl').open('a') as log:
                             log.write(json.dumps(dict(file=file,stage=triage.get('stage','local'),utc=row['utc'],action='report only; awaiting user direction'))+'\n')

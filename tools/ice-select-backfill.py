@@ -30,9 +30,22 @@ def main():
     out=root/'amundsen-ice-gemma-2026'
     control=out/'backfill-paused.json'
     policy=json.loads(control.read_text())
+    allowed=list(dict.fromkeys(allowed+policy.get('additional_allowed_files',[])))
     report.sort(key=lambda r:(-(r['ice_fraction'] if r['ice_fraction'] is not None else -1),r['cluster']))
     policy.update(reason='All human-labelled joint t-SNE Ward k=64 clusters, highest human ice-label fraction first; unlabelled clusters excluded.',label_source=str(source),allowed_files=allowed,clusters=report,ice_fraction_by_file=fractions,cluster_by_file=cluster_by_file,cluster_rank={str(r['cluster']):i for i,r in enumerate(report)})
+    if policy.get('additional_allowed_files'):
+        policy['reason']='Human-labelled clusters ranked by ice-label fraction, plus explicitly authorized archive photos.'
     tmp=control.with_suffix('.tmp');tmp.write_text(json.dumps(policy,indent=2));tmp.replace(control)
+    archive_selection=root/'amundsen-ice-gemma-leg4-size-evidence/selection.json'
+    if archive_selection.exists():
+        archive=json.loads(archive_selection.read_text())
+        archive['queue'].sort(key=lambda r:(
+            -fractions.get(r['file'],0),
+            policy['cluster_rank'].get(str(cluster_by_file.get(r['file'])),9999),
+            r['file']))
+        archive['description']='All Leg 4 photos, ordered by combined-map human ice-label fraction, highest first.'
+        temp=archive_selection.with_suffix('.priority.tmp')
+        temp.write_text(json.dumps(archive,indent=2));temp.replace(archive_selection)
     queue=json.loads((out/'selection.json').read_text())['queue']
     done={r['file'] for name in ('results.json','seawater-skips.json') for r in json.loads((out/name).read_text())}
     allowed=set(allowed)

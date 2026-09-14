@@ -1,4 +1,5 @@
 """Refresh completed combined projection annotations without refitting its layout."""
+import fcntl
 import importlib.util
 import argparse
 import json
@@ -30,5 +31,14 @@ if args.finish_layout:
 if (portal/'embedding.json').exists():
     spec=importlib.util.spec_from_file_location('explorer',Path(__file__).resolve().with_name('ice-region-explorer.py'))
     explorer=importlib.util.module_from_spec(spec);spec.loader.exec_module(explorer)
-    explorer.render(portal,[],False,live_only=args.annotations_only)
-    print('Updated combined 2025–2026 model annotations')
+    with (portal/'refresh.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        processing=portal/'annotation-processing-sources.json'
+        sources=json.loads(processing.read_text()) if processing.exists() else []
+        production=dict(kind='production_sqlite',path='/data/underway_server/ice/ice.sqlite')
+        if production not in sources:
+            sources.append(production)
+            temporary=processing.with_suffix('.tmp')
+            temporary.write_text(json.dumps(sources,indent=2)+'\n');temporary.replace(processing)
+        explorer.render(portal,[],False,live_only=args.annotations_only)
+    print('Updated combined 2025–2026 classifications and filter estimates')

@@ -6,6 +6,9 @@ import subprocess
 import time
 import importlib.util
 import os
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from dashboard.camera_completion import completion_counts, external_completions
 
 ROOT=Path(os.environ.get('ICE_TEACHER_ROOT','/home/cryomics/Downloads/amundsen-ice-gemma-overnight'))
 STATE=Path(os.environ.get('ICE_TEACHER_STATE','/home/cryomics/.cache/underway/teacher-watch.json'))
@@ -19,15 +22,19 @@ state=json.loads(STATE.read_text()) if STATE.exists() else dict(started=time.tim
 try:
     rows=json.loads(RESULTS.read_text())
 except FileNotFoundError:rows=[]
-expected=len(json.loads((ROOT/'queue.json').read_text())['queue'])
-saved_files={r['file'] for r in rows if r.get('finish_reason')=='stop'}
+queue_files={r['file'] for r in json.loads((ROOT/'queue.json').read_text())['queue']}
+expected=len(queue_files)
+classified_files={r['file'] for r in rows if r.get('finish_reason')=='stop'}
+external=external_completions(os.environ.get('ICE_GEMMA_COMPLETED_SOURCES'),RESULTS,queue_files)
+filtered_files=set()
 if (ROOT/'seawater-skips.json').exists():
-    saved_files.update(r['file'] for r in json.loads((ROOT/'seawater-skips.json').read_text())
+    filtered_files.update(r['file'] for r in json.loads((ROOT/'seawater-skips.json').read_text())
         if not (ROOT/('batch-filter-disabled.json' if r.get('stage')=='batch' else 'seawater-filter-disabled.json')).exists())
-saved=len(saved_files)
+counts=completion_counts(classified_files,filtered_files,external,queue_files)
+saved=counts['completed']
 active=subprocess.run(['systemctl','--user','is-active',UNIT],capture_output=True,text=True).stdout.strip()
 cpu,gpu,_,_=m.temperatures()
-state.update(saved=saved,expected=expected,service=active,cpu=cpu,gpu=gpu,checked_utc=datetime.now(timezone.utc).isoformat())
+state.update(saved=saved,**counts,expected=expected,service=active,cpu=cpu,gpu=gpu,checked_utc=datetime.now(timezone.utc).isoformat())
 if saved>=expected and os.environ.get('ICE_TEACHER_LIVE')!='1':
     state['status']='complete';subprocess.run(['systemctl','--user','stop',TIMER],check=False)
 elif time.time()-state['started']>=float(os.environ.get('ICE_TEACHER_MAX_HOURS','8'))*3600:
