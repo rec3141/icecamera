@@ -1,0 +1,8 @@
+[Unit]
+Description=Sample CPU/GPU temperatures and update history page
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/dev/icecamera
+ExecStart=/opt/miniforge3/bin/python3 tools/ice-temperature-page.py --output /home/cryomics/Downloads/amundsen-temperatures
+

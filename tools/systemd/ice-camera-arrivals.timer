@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for new camera photos every five minutes
+
+[Timer]
+OnActiveSec=5
+OnUnitInactiveSec=5min
+Unit=ice-camera-arrivals.service
+
+[Install]
+WantedBy=timers.target

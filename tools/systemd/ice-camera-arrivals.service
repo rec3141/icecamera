@@ -1,0 +1,9 @@
+[Unit]
+Description=Cache new camera arrivals and publish newest-first queue
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/dev/icecamera
+ExecStart=/opt/miniforge3/bin/python3 -u tools/ice-camera-arrivals.py
+Nice=15
+TimeoutStartSec=30min
