@@ -1,0 +1,16 @@
+[Unit]
+Description=Monitor 2026 Gemma progress with cool-only retries
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/dev/icecamera
+Environment=ICE_TEACHER_ROOT=/home/cryomics/Downloads/amundsen-ice-gemma-2026
+Environment=ICE_TEACHER_STATE=/home/cryomics/.cache/underway/gemma-2026-watch.json
+Environment=ICE_TEACHER_PAUSE=/home/cryomics/.cache/underway/gemma-2026-paused
+Environment=ICE_TEACHER_UNIT=ice-gemma-2026.service
+Environment=ICE_TEACHER_TIMER=ice-gemma-2026-watch.timer
+Environment=ICE_TEACHER_RESULTS=results.json
+Environment=ICE_TEACHER_MAX_HOURS=168
+Environment=ICE_TEACHER_LIVE=1
+ExecStart=/opt/miniforge3/bin/python3 tools/ice-teacher-watch.py
+ExecStartPost=/opt/miniforge3/bin/python3 tools/ice-refresh-2026-projection.py

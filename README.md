@@ -46,7 +46,7 @@ the underway checkout), which takes completed results and never queues photos.
 | `tools/` | backfill workers, training, review pages, projections and experiments (below) |
 | `dashboard/` | the camera modules shared with underway (`camera_batch`, `camera_features`, `camera_live`, `camera_model`, `camera_seawater` are identical to underway's), plus `camera_completion` and `ice_classifier`, used only here; not the web application |
 | `tests/` | unit tests for the camera modules and queues |
-| `tools/systemd/` | the hourly projection-refresh unit and timer |
+| `tools/systemd/` | the user units and timers that run the tools below (see **Timers**) |
 | `ops/` | machine-local service units (git-ignored); read before installing |
 
 ## Tools
@@ -84,6 +84,15 @@ with day holdouts; `ice-seawater-v2-review`, `ice-seawater-recheck` and
 into a rolling page.
 
 Each tool's docstring says what it reads and writes.
+
+**Timers.** The user units in `tools/systemd/` run as `cryomics`.
+`ice-camera-arrivals.timer` runs `ice-camera-arrivals` five minutes after each
+run ends; `ice-2026-hourly.timer` refreshes the combined t-SNE, linkage trees
+and backfill ranking each hour; `ice-gemma-2026-watch.timer` runs
+`ice-teacher-watch` against `ice-gemma-2026.service` each minute, then
+refreshes the 2026 projection; `ice-temperature-tracker.timer` runs
+`ice-temperature-page` every 30 seconds to update the CPU/GPU temperature
+history in `~/Downloads/amundsen-temperatures`.
 
 ## Data
 
